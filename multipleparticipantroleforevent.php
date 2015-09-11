@@ -23,24 +23,6 @@ function multipleparticipantroleforevent_civicrm_xmlMenu(&$files) {
 }
 
 /**
- * Implementation of hook_civicrm_install
- *
- * @link http://wiki.civicrm.org/confluence/display/CRMDOC/hook_civicrm_install
- */
-function multipleparticipantroleforevent_civicrm_install() {
-  return _multipleparticipantroleforevent_civix_civicrm_install();
-}
-
-/**
- * Implementation of hook_civicrm_uninstall
- *
- * @link http://wiki.civicrm.org/confluence/display/CRMDOC/hook_civicrm_uninstall
- */
-function multipleparticipantroleforevent_civicrm_uninstall() {
-  return _multipleparticipantroleforevent_civix_civicrm_uninstall();
-}
-
-/**
  * Implementation of hook_civicrm_enable
  *
  * @link http://wiki.civicrm.org/confluence/display/CRMDOC/hook_civicrm_enable
@@ -111,57 +93,160 @@ function multipleparticipantroleforevent_civicrm_alterSettingsFolders(&$metaData
  * Function to allow multiple participant roles to register for an event
  */
 function multipleparticipantroleforevent_civicrm_buildForm($formName, &$form) {
-  if ($formName == 'CRM_Event_Form_Registration_Register' || $formName == 'CRM_Event_Form_Registration_Confirm' || $formName == 'CRM_Event_Form_ManageEvent_EventInfo') {
+  $allParticipantRoles    = CRM_Event_PseudoConstant::participantRole();
 
-      $allParticipantRoles    = CRM_Event_PseudoConstant::participantRole();
-      if ($formName == 'CRM_Event_Form_ManageEvent_EventInfo') {
-        $form->assign("allParticipantRoles", $allParticipantRoles);
-        $form->assign("eventID", $form->_id);
+  if ($formName == 'CRM_Event_Form_ManageEvent_EventInfo') {
+    $form->assign("allParticipantRoles", $allParticipantRoles);
+    $form->assign("eventID", $form->_id);
+  }
+  if ($formName == 'CRM_Event_Form_Registration_Register' ||
+      $formName == 'CRM_Event_Form_Registration_Confirm' ||
+      $formName == 'CRM_Event_Form_Registration_ThankYou') {
 
-        /*Get price set id by event ID*/
-        if ($form->_id) {
-          $priceSetId = CRM_Core_DAO::getFieldValue('CRM_Price_DAO_PriceSetEntity', $form->_id, 'price_set_id', 'entity_id');
-          if ($priceSetId) {
-            $priceFieldId = CRM_Core_DAO::getFieldValue('CRM_Price_DAO_PriceField', $priceSetId, 'id', 'price_set_id');
-            $sql = "SELECT id, amount
-   FROM civicrm_price_field_value
-   WHERE price_field_id = %1
-   AND is_active = 1";
-            $params = array(
-              1 => array($priceFieldId, 'Integer'),
-            );
-            $result   = CRM_Core_DAO::executeQuery($sql, $params);
-            $priceFieldValues = array();
-            while ($result->fetch()) {
-              $priceFieldValues[md5($result->id)] = $result->amount;
-            }
-            if (!empty($priceFieldValues)) {
-              $isPricePresent = 1;
-              $form->assign("isPricePresent", $isPricePresent);
-              $form->assign("priceFieldValues", $priceFieldValues);
-            }
-          }
-        }
-      } else {
-        $participantrole = '';
-        $participantroleHashed = CRM_Utils_Request::retrieve('participantrole', 'String', $form);
-        foreach($allParticipantRoles as $roleId => $roleName) {
-          if (md5($roleId) == $participantroleHashed) {
-            $participantrole = $roleId;
-            break;
-          }
-        }
-        if (!empty($participantrole)) {
-          $form->_values['event']['default_role_id'] = $participantrole;
-          $form->_values['event']['participant_role'] = $allParticipantRoles[$participantrole];
-          //Reassign just in case variables were assigned in preproccess
-          $event = $form->get_template_vars('event');
-          $event['participant_role'] = $form->_values['event']['participant_role'];
-          $event['default_role_id'] = $form->_values['event']['default_role_id'];
-          $form->assign("event", $event);
+      $participantrole = '';
+      $participantroleHashed = CRM_Utils_Request::retrieve('participantrole', 'String', $form);
+      foreach($allParticipantRoles as $roleId => $roleName) {
+        if (md5($roleId) == $participantroleHashed) {
+          $participantrole = $roleId;
+          break;
         }
       }
-   }
+
+      if (!empty($participantrole)) {
+        $form->_values['event']['default_role_id'] = $participantrole;
+        $form->_values['event']['participant_role'] = $allParticipantRoles[$participantrole];
+        //Reassign just in case variables were assigned in preproccess
+        $event = $form->get_template_vars('event');
+        $event['participant_role'] = $form->_values['event']['participant_role'];
+        $event['default_role_id'] = $form->_values['event']['default_role_id'];
+        $form->assign("event", $event);
+      }
+      else {
+        $participantrole = $form->_values['event']['default_role_id'];
+      }
+
+
+      //Get profile id
+      $profileID = $form->_values['custom_post_id'];
+      //Check if there are no custom fields in Profile, hide profile completely - assign it to templates
+      $form->assign("profileIDs", $profileID);
+
+      //Get custom fields for this participant role
+      $fields = &CRM_Core_BAO_CustomField::getFields('Participant',
+        FALSE,
+        FALSE,
+        $participantrole,
+        1,
+        FALSE,
+        FALSE,
+        FALSE
+      );
+
+      $allowedCustomFields = array_keys($fields);
+      $counterCustomFieldPresent = 0;
+      $customFieldsTitle = array();
+      foreach ($form->_fields as $field => $fieldArray) {
+        if (preg_match('#^custom#', $field) === 1) {
+          $customFieldId = intval(substr($field, strpos($field, '_') + 1));
+
+          //just to differentiate with other fields prefixed with "custom_"
+          if (is_int($customFieldId)) {
+
+            //Check if the custom field id is in the list of allowedCustomFields
+            if (!in_array($customFieldId, $allowedCustomFields)) {
+              if ($fieldArray['title']) {
+                $customFieldsTitle[] = $fieldArray['title'];
+              }
+
+              unset($form->_fields[$field]);
+              unset($form->_rules[$field], $form->_elementIndex[$field]);
+              unset($form->_defaults[$field], $form->_defaultValues[$field]);
+
+              //Remove from html elements
+              foreach ($form->_elements as $key => $value) {
+                if ($value->_attributes['name'] == $field) {
+                  unset($form->_elements[$key]);
+                }
+              }
+            }
+          }
+        }
+      }
+
+      if($formName == 'CRM_Event_Form_Registration_Confirm') {
+        $params = $form->get_template_vars('primaryParticipantProfile');
+        foreach($params['CustomPre'] as $label => $value) {
+          if (in_array($label, $customFieldsTitle)) {
+            unset($params['CustomPre'][$label]);
+          }
+        }
+
+        foreach($params['CustomPost'] as $profile => $profileVal) {
+          foreach ($profileVal as $label => $value) {
+            if (in_array($label, $customFieldsTitle)) {
+              unset($params['CustomPost'][$profile][$label]);
+            }
+          }
+        }
+        $form->assign('primaryParticipantProfile', $params);
+      }
+  }
+
+  $action = $form->getVar('_action');
+  if ($formName == 'CRM_Price_Form_Field' && $action == CRM_Core_Action::UPDATE) {
+    $participantRoles    = CRM_Event_PseudoConstant::participantRole();
+    if (!empty($participantRoles)) {
+      $form->add('select', 'participant_roles', 'participant_roles', $participantRoles);
+      $element = $form->getElement('participant_roles');
+      $element->setMultiple(true);
+    }
+
+    //Set Defaults
+    $price_field_id = CRM_Utils_Request::retrieve('fid', 'String', $form);
+    if ($price_field_id) {
+      $fieldID = CRM_Core_DAO::getFieldValue('CRM_Price_DAO_PriceFieldValue', $price_field_id, 'id', 'price_field_id');
+    }
+    if ($fieldID) {
+      $defaults = multipleparticipantroleforevent_getAcls($fieldID);
+      $form->setDefaults(array('participant_roles' => $defaults['pids']));
+    }
+  }
+}
+
+/**
+ * Implementation of hook_civicrm_postProcess
+ *
+ * @link http://wiki.civicrm.org/confluence/display/CRMDOC/hook_civicrm_postProcess
+ */
+function multipleparticipantroleforevent_civicrm_postProcess($formName, &$form) {
+  $action = $form->getVar('_action');
+  if ($formName == 'CRM_Price_Form_Field' && $action == CRM_Core_Action::UPDATE) {
+
+    $price_field_id = CRM_Utils_Request::retrieve('fid', 'String', $form);
+    $participantRoles = $form->getElement('participant_roles')->getValue();
+
+    if ($price_field_id) {
+      $fieldID = CRM_Core_DAO::getFieldValue('CRM_Price_DAO_PriceFieldValue', $price_field_id, 'id', 'price_field_id');
+    }
+
+    if ($fieldID) {
+      //delete any records with this field id first
+      $sql = "DELETE FROM civicrm_participantrole_price WHERE field_id= %1";
+      $delparams = array(1 => array($fieldID, 'Integer'));
+      CRM_Core_DAO::executeQuery($sql, $delparams);
+
+      if (!empty ($participantRoles)) {
+        foreach ($participantRoles as $participantRoleId) {
+          //insert new records
+          $sql = "INSERT INTO civicrm_participantrole_price (participant_role, price_field_id, field_id) VALUES (%1, %2, %3)";
+          $params = array(1 => array((int)$participantRoleId, 'Integer'),
+            2 => array((int)$price_field_id, 'Integer'),
+            3 => array((int)$fieldID, 'Integer'));
+          CRM_Core_DAO::executeQuery($sql, $params);
+        }
+      }
+    }
+  }
 }
 
 /**
@@ -171,37 +256,124 @@ function multipleparticipantroleforevent_civicrm_buildForm($formName, &$form) {
 function multipleparticipantroleforevent_civicrm_buildAmount($pageType, &$form, &$amount) {
   if ($pageType == 'event') {
     $priceSetId = $form->get( 'priceSetId' );
+    $backupPriceSet = $form->_priceSet;
+    $priceSet = &$form->_priceSet;
 
-    //Apply discounted price only if there is any "participantrole" in url
     $participantrole = '';
     $participantroleHashed = CRM_Utils_Request::retrieve('participantrole', 'String', $form);
     $allParticipantRoles    = CRM_Event_PseudoConstant::participantRole();
-    foreach($allParticipantRoles as $roleId => $roleName) {
-      if (md5($roleId) == $participantroleHashed) {
-        $participantrole = $roleId;
-        break;
+
+    //If we find participantrole in url
+    if ($participantroleHashed) {
+      foreach($allParticipantRoles as $roleId => $roleName) {
+        if (md5($roleId) == $participantroleHashed) {
+          $participantrole = $roleId;
+          break;
+        }
       }
     }
+    else {
+      $defaultParticipantRole = $form->_values['event']['default_role_id'];
+      $participantrole = $defaultParticipantRole;
+    }
 
-    $pricesetFieldIdHashed = CRM_Utils_Request::retrieve('fieldid', 'String', $form);
-    if (isset($participantrole) && !empty($participantrole) && isset($pricesetFieldIdHashed) && !empty($pricesetFieldIdHashed)) {
+    if (isset($participantrole) && !empty($participantrole)) {
       if ( !empty( $priceSetId ) ) {
+        $backupAmount = $amount;
         $feeBlock =& $amount;
-        foreach( $feeBlock as &$fee ) {
+
+        $counter = 0;
+        foreach( $feeBlock as $k => &$fee ) {
           if ( !is_array( $fee['options'] ) ) {
             continue;
           }
+
+          $price_field_id = $fee['id'];
           foreach ( $fee['options'] as $key => &$option ) {
-            if (md5($key) == $pricesetFieldIdHashed) {
-              $option['is_default'] = 1;
-              continue;
+            $fieldID = $option['id'];
+
+            $sql = "SELECT COUNT(*) as count
+              FROM civicrm_participantrole_price
+              WHERE participant_role = %1
+              AND price_field_id = %2
+              AND field_id = %3";
+
+            $params = array(1 => array((int)$participantrole, 'Integer'),
+            2 => array((int)$price_field_id, 'Integer'),
+            3 => array((int)$fieldID, 'Integer'));
+
+            $founInPriceRoleSetting = CRM_Core_DAO::singleValueQuery($sql, $params);
+            if ($founInPriceRoleSetting == 1) {
+              $counter++;
             }
             else {
-              unset($fee['options'][$key]);
+              unset($feeBlock[$k]);
+              //unsetting it from $form->priceSet as it leaves the labels of Price Options behind
+              unset($priceSet['fields'][$price_field_id]);
             }
           }
+        }
+        //Restore priceset
+        if($counter < 1) {
+          $feeBlock = $backupAmount;
+          $priceSet = $backupPriceSet;
         }
       }
     }
   }
+}
+
+/**
+ * Implementation of hook_civicrm_install
+ *
+ * @link http://wiki.civicrm.org/confluence/display/CRMDOC/hook_civicrm_install
+ */
+function multipleparticipantroleforevent_civicrm_install() {
+  $sql = array(
+    "CREATE TABLE IF NOT EXISTS `civicrm_participantrole_price` (
+      `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
+      `participant_role` int(11) unsigned NOT NULL,
+      `price_field_id` int(11) unsigned NOT NULL,
+      `field_id` int(11) unsigned NOT NULL,
+      PRIMARY KEY (`id`)
+    )",
+    "ALTER TABLE `civicrm_participantrole_price`
+      ADD CONSTRAINT `civicrm_participantrole_price_fk_2` FOREIGN KEY (`price_field_id`) REFERENCES `civicrm_price_field` (`id`),
+      ADD CONSTRAINT `civicrm_participantrole_price_fk_1` FOREIGN KEY (`field_id`) REFERENCES `civicrm_price_field_value` (`id`);"
+  );
+
+  foreach ($sql as $query) {
+    $result = CRM_Core_DAO::executeQuery($query);
+  }
+  return _multipleparticipantroleforevent_civix_civicrm_install();
+}
+
+/**
+ * Implementation of hook_civicrm_uninstall
+ *
+ * @link http://wiki.civicrm.org/confluence/display/CRMDOC/hook_civicrm_uninstall
+ */
+function multipleparticipantroleforevent_civicrm_uninstall() {
+  CRM_Core_DAO::executeQuery("DROP TABLE civicrm_participantrole_price;");
+  return _multipleparticipantroleforevent_civix_civicrm_uninstall();
+}
+
+/**
+ * Get Participant Roles for fieldID
+ *
+ * @param $oid
+ *   the price option ID.
+ * @return array
+ */
+function multipleparticipantroleforevent_getAcls($fieldId) {
+  $result = array('pids' => array());
+  $sql = "SELECT participant_role FROM civicrm_participantrole_price WHERE field_id = %1";
+  $params = array ( 1 =>
+    array ( (int)$fieldId, 'Integer' )
+    );
+  $dao = CRM_Core_DAO::executeQuery($sql, $params);
+  while ($dao->fetch()) {
+    array_push($result['pids'], $dao->participant_role);
+  }
+  return $result;
 }
