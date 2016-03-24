@@ -175,16 +175,20 @@ function multipleparticipantroleforevent_civicrm_buildForm($formName, &$form) {
 
       if($formName == 'CRM_Event_Form_Registration_Confirm') {
         $params = $form->get_template_vars('primaryParticipantProfile');
-        foreach($params['CustomPre'] as $label => $value) {
-          if (in_array($label, $customFieldsTitle)) {
-            unset($params['CustomPre'][$label]);
+        if (isset($params['CustomPre'])) {
+          foreach($params['CustomPre'] as $label => $value) {
+            if (in_array($label, $customFieldsTitle)) {
+              unset($params['CustomPre'][$label]);
+            }
           }
         }
 
-        foreach($params['CustomPost'] as $profile => $profileVal) {
-          foreach ($profileVal as $label => $value) {
-            if (in_array($label, $customFieldsTitle)) {
-              unset($params['CustomPost'][$profile][$label]);
+        if (isset($params['CustomPost'])) {
+          foreach($params['CustomPost'] as $profile => $profileVal) {
+            foreach ($profileVal as $label => $value) {
+              if (in_array($label, $customFieldsTitle)) {
+                unset($params['CustomPost'][$profile][$label]);
+              }
             }
           }
         }
@@ -292,18 +296,29 @@ function multipleparticipantroleforevent_civicrm_buildAmount($pageType, &$form, 
           foreach ( $fee['options'] as $key => &$option ) {
             $fieldID = $option['id'];
 
-            $sql = "SELECT COUNT(*) as count
-              FROM civicrm_participantrole_price
-              WHERE participant_role = %1
-              AND price_field_id = %2
-              AND field_id = %3";
-
             $params = array(1 => array((int)$participantrole, 'Integer'),
             2 => array((int)$price_field_id, 'Integer'),
             3 => array((int)$fieldID, 'Integer'));
 
-            $founInPriceRoleSetting = CRM_Core_DAO::singleValueQuery($sql, $params);
-            if ($founInPriceRoleSetting == 1) {
+            $sql = "SELECT COUNT(*) as count
+                   FROM civicrm_participantrole_price
+                   WHERE price_field_id = %2
+                   AND field_id = %3";
+            if (CRM_Core_DAO::singleValueQuery($sql, $params) > 0) {
+              // price field in table so check if enabled for this participant role
+              $sql = "SELECT COUNT(*) as count
+                FROM civicrm_participantrole_price
+                WHERE participant_role = %1
+                AND price_field_id = %2
+                AND field_id = %3";
+                $showPriceFieldForRole = CRM_Core_DAO::singleValueQuery($sql, $params);
+            }
+            else {
+              // price field not in table so show for all participant roles
+              $showPriceFieldForRole = 1;
+            }
+
+            if ($showPriceFieldForRole == 1) {
               $counter++;
             }
             else {
